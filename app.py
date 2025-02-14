@@ -4,8 +4,8 @@ import requests
 import pandas as pd
 
 # Set up Spotify API client
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id='ec66a64b68894a6f87c36c03e889ba49', 
-                                               client_secret='7a465e16f3c94f2fbda3d52b5bff24dd',
+sp = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id='CLIENT_ID', 
+                                               client_secret='CLIENT_SECRET',
                                                redirect_uri='http://localhost:8888/callback', 
                                                scope="user-top-read"))
 
@@ -35,7 +35,7 @@ spotify_data['genres'] = spotify_data['artist'].apply(get_artist_genres)
 print(spotify_data)
 
 # Replace with your actual API key from Ticketmaster
-api_key = 'vv2Wi8zdANbpanYvicrAJiSZfUMdw6SQ'
+api_key = 'API_KEY'
 
 # Define the search parameters for Ticketmaster
 params = {
