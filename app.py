@@ -1,8 +1,9 @@
 from spotify_api import get_spotify_client, get_user_top_tracks
 from ticketmaster_api import get_events_by_city
-from transformers import DistilBertTokenizer, DistilBertModel
 import torch
 import pandas as pd
+from models import ModelFactory
+from sklearn.metrics.pairwise import cosine_similarity
 
 def main():
     spotify_client_id = 'ec66a64b68894a6f87c36c03e889ba49'
@@ -24,50 +25,41 @@ def main():
 
     print(events_by_city)
 
-    # Load DistilBERT tokenizer and model
-    tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-    model = DistilBertModel.from_pretrained('distilbert-base-uncased')
+    # ... (rest of the code remains the same)
 
-    # Function to encode text
-    def get_embeddings(text):
-        inputs = tokenizer(text, return_tensors='pt', padding=True, truncation=True)
-        outputs = model(**inputs)
-        # Perform mean pooling to get a 2D tensor
-        embeddings = torch.mean(outputs.last_hidden_state, dim=1).detach()
-        return embeddings.squeeze(0)  # Remove extra dimension
+    model_factory = ModelFactory()
+    models_to_test = ['distilbert', 'bert', 'roberta']  # Add more models as needed
 
-    # Function to encode text
+    for model_name in models_to_test:
+        model = model_factory.get_model(model_name)
+        print(f"Testing {model_name} model...")
 
-    # Get embeddings for Spotify genres and Ticketmaster event genres
-    spotify_embeddings = (
-        user_tracks.explode('genres')['genres']
-        .dropna()  # Remove NaN values if any
-        .loc[lambda x: x != '']  # Remove empty strings
-        .apply(get_embeddings)
-    )
-    event_embeddings = events_by_city['genre'].apply(get_embeddings)
+        # Get embeddings for Spotify genres and Ticketmaster event genres
+        spotify_embeddings = (
+            user_tracks.explode('genres')['genres']
+            .dropna()  # Remove NaN values if any
+            .loc[lambda x: x != '']  # Remove empty strings
+            .apply(model.get_embeddings)
+        )
+        event_embeddings = events_by_city['genre'].apply(model.get_embeddings)
 
-    # Compare similarity and recommend events
-    from sklearn.metrics.pairwise import cosine_similarity
+        # Compare similarity and recommend events
+        spotify_embeddings_np = torch.stack(spotify_embeddings.tolist()).numpy()
+        event_embeddings_np = torch.stack(event_embeddings.tolist()).numpy()
 
-    # Convert embeddings to numpy arrays
-    spotify_embeddings_np = torch.stack(spotify_embeddings.tolist()).numpy()
-    event_embeddings_np = torch.stack(event_embeddings.tolist()).numpy()
+        recommendations = []
+        for spotify_emb in spotify_embeddings_np:
+            similarities = cosine_similarity([spotify_emb], event_embeddings_np)
+            top_indices = similarities[0].argsort()[-5:][::-1]  # Get top 5 similar events
 
-    recommendations = []
-    for spotify_emb in spotify_embeddings_np:
-        similarities = cosine_similarity([spotify_emb], event_embeddings_np)
-        top_indices = similarities[0].argsort()[-5:][::-1]  # Get top 5 similar events
-        
-        for index in top_indices:
-            event_name = events_by_city.iloc[index]['event_name']
-            event_url = events_by_city.iloc[index]['event_url']
-            recommendations.append([event_name, event_url])  # Store as a list of two elements
+            for index in top_indices:
+                event_name = events_by_city.iloc[index]['event_name']
+                event_url = events_by_city.iloc[index]['event_url']
+                recommendations.append([event_name, event_url])  # Store as a list of two elements
 
-    print("\n#######################################################################################################################\n")
-    # Print recommended events as a DataFrame
-    print("Recommended Events Based on Your Top Tracks:")
-    print(pd.DataFrame(recommendations, columns=['Event Name', 'Event URL']))
+        print("\n#######################################################################################################################\n")
+        print(f"Recommended Events Based on Your Top Tracks using {model_name} model:")
+        print(pd.DataFrame(recommendations, columns=['Event Name', 'Event URL']))
 
 if __name__ == '__main__':
     main()
