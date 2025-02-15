@@ -16,7 +16,7 @@ source $VENV_NAME/bin/activate
 
 # Install dependencies from requirements.txt
 echo "Installing dependencies..."
-pip install requests spotipy pandas
+pip install requests spotipy pandas torch transformers scikit-learn
 
 echo "Setup complete. Virtual environment is ready!"
 exec bash

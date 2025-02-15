@@ -1,84 +1,73 @@
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
-import requests
+from spotify_api import get_spotify_client, get_user_top_tracks
+from ticketmaster_api import get_events_by_city
+from transformers import DistilBertTokenizer, DistilBertModel
+import torch
 import pandas as pd
 
-# Set up Spotify API client
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id='CLIENT_ID', 
-                                               client_secret='CLIENT_SECRET',
-                                               redirect_uri='http://localhost:8888/callback', 
-                                               scope="user-top-read"))
-
-# Fetch your Spotify top tracks
-results = sp.current_user_top_tracks(limit=50, time_range='long_term')
-tracks = results['items']
-
-# Extract relevant features (genre, artist, track)
-spotify_data = pd.DataFrame([{
-    'track_name': track['name'],
-    'artist': track['artists'][0]['name'],
-    'popularity': track['popularity'],
-    'track_id': track['id']
-} for track in tracks])
-
-# Fetch artist genres for each track using a separate function to avoid repeated API calls
-def get_artist_genres(artist_name):
-    artist = sp.search(q='artist:' + artist_name, type='artist', limit=1)
-    if artist['artists']['items']:
-        return artist['artists']['items'][0]['genres']
-    return []
-
-# Apply function to get genres for each artist
-spotify_data['genres'] = spotify_data['artist'].apply(get_artist_genres)
-
-# Print the Spotify data to check
-print(spotify_data)
-
-# Replace with your actual API key from Ticketmaster
-api_key = 'API_KEY'
-
-# Define the search parameters for Ticketmaster
-params = {
-    'apikey': api_key,  # Your API key
-    'city': 'Melbourne',  # Search for events in Melbourne
-    'classificationName': 'Music',  # Filter by music events
-    'size': 100,  # Limit to 100 events
-}
-
-# Send the GET request to the Ticketmaster API
-url = 'https://app.ticketmaster.com/discovery/v2/events.json'
-response = requests.get(url, params=params)
-
-# Check for successful response
-if response.status_code == 200:
-    events = response.json()  # Parse the JSON response
-    event_data = []
-    if '_embedded' in events and 'events' in events['_embedded']:
-        for event in events['_embedded']['events']:
-            event_name = event['name']
-            event_date = event['dates']['start']['localDate']
-            event_url = event['url']
-            event_genre = event['classifications'][0]['genre']['name'] if 'classifications' in event else 'N/A'
-            event_data.append({
-                'event_name': event_name,
-                'event_date': event_date,
-                'event_url': event_url,
-                'genre': event_genre
-            })
+def main():
+    spotify_client_id = 'ec66a64b68894a6f87c36c03e889ba49'
+    spotify_client_secret = '7a465e16f3c94f2fbda3d52b5bff24dd'
+    redirect_uri = 'http://localhost:8888/callback'
+    city = 'Melbourne'
     
-    # Convert event data into a DataFrame
-    event_df = pd.DataFrame(event_data)
+    sp = get_spotify_client(spotify_client_id, spotify_client_secret, redirect_uri)
+    user_tracks = get_user_top_tracks(sp)
     
-    # Filter events based on the top genres from Spotify data
-    top_genres = spotify_data['genres'].explode().value_counts().head(5).index.tolist()  # Get top 5 genres
-    
-    # Filter Ticketmaster events to match genres
-    recommended_events = event_df[event_df['genre'].isin(top_genres)]
-    
-    # Print the recommended events
+    user_tracks = pd.DataFrame(user_tracks)
+
+    print(user_tracks)
+
+    events_by_city = get_events_by_city(city)
+    events_by_city = pd.DataFrame(events_by_city)
+
+    print("\n#######################################################################################################################\n")
+
+    print(events_by_city)
+
+    # Load DistilBERT tokenizer and model
+    tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+    model = DistilBertModel.from_pretrained('distilbert-base-uncased')
+
+    # Function to encode text
+    def get_embeddings(text):
+        inputs = tokenizer(text, return_tensors='pt', padding=True, truncation=True)
+        outputs = model(**inputs)
+        # Perform mean pooling to get a 2D tensor
+        embeddings = torch.mean(outputs.last_hidden_state, dim=1).detach()
+        return embeddings.squeeze(0)  # Remove extra dimension
+
+    # Function to encode text
+
+    # Get embeddings for Spotify genres and Ticketmaster event genres
+    spotify_embeddings = (
+        user_tracks.explode('genres')['genres']
+        .dropna()  # Remove NaN values if any
+        .loc[lambda x: x != '']  # Remove empty strings
+        .apply(get_embeddings)
+    )
+    event_embeddings = events_by_city['genre'].apply(get_embeddings)
+
+    # Compare similarity and recommend events
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    # Convert embeddings to numpy arrays
+    spotify_embeddings_np = torch.stack(spotify_embeddings.tolist()).numpy()
+    event_embeddings_np = torch.stack(event_embeddings.tolist()).numpy()
+
+    recommendations = []
+    for spotify_emb in spotify_embeddings_np:
+        similarities = cosine_similarity([spotify_emb], event_embeddings_np)
+        top_indices = similarities[0].argsort()[-5:][::-1]  # Get top 5 similar events
+        
+        for index in top_indices:
+            event_name = events_by_city.iloc[index]['event_name']
+            event_url = events_by_city.iloc[index]['event_url']
+            recommendations.append([event_name, event_url])  # Store as a list of two elements
+
+    print("\n#######################################################################################################################\n")
+    # Print recommended events as a DataFrame
     print("Recommended Events Based on Your Top Tracks:")
-    print(recommended_events[['event_name', 'event_date', 'event_url', 'genre']])
+    print(pd.DataFrame(recommendations, columns=['Event Name', 'Event URL']))
 
-else:
-    print(f"Error: {response.status_code} - {response.text}")
-
+if __name__ == '__main__':
+    main()
